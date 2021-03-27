@@ -15,12 +15,19 @@ export interface BedrockFile {
   size: number
 }
 
+export interface BedrockPlayer {
+  handle: string
+  xuid: string
+}
+
 class BedrockEvents {
   static SERVER_STARTED = 'server-started';
   static SERVER_STOPPED = 'server-stopped';
   static PERMISSIONS_LISTED = 'permissions-listed';
   static SAVE_HELD = 'save-held';
   static SAVE_RESUMED = 'save-resume';
+  static PLAYER_CONNECTED = 'player-connected';
+  static PLAYER_DISCONNECTED = 'player-disconnected';
 }
 
 class BedrockMessages {
@@ -35,13 +42,30 @@ export class Bedrock {
   private readonly serverPath: string;
   private readonly events = new EventEmitter();
   private server?: ChildProcessWithoutNullStreams;
+  private backupTimeoutId: NodeJS.Timeout | null = null;
+  private backingUp = false;
+  private currentMessage = '';
+
+  private _playerCount = 0;
+  get playerCount() {
+    return this._playerCount;
+  }
 
   constructor(serverPath: string) {
     this.serverPath = serverPath;
   }
 
   private dataListener(data: Buffer) {
-    const message = data.toString().trim();
+    const dataStr = data.toString();
+
+    if (dataStr.substring(dataStr.length - 1) !== '\n') {
+      this.currentMessage += dataStr;
+      return;
+    }
+
+    const message = this.currentMessage + dataStr.trim();
+    this.currentMessage = '';
+
     if (message === BedrockMessages.SERVER_STARTED) {
       this.events.emit(BedrockEvents.SERVER_STARTED);
     }
@@ -53,6 +77,38 @@ export class Bedrock {
     }
     else if (message === BedrockMessages.SAVE_RESUMED) {
       this.events.emit(BedrockEvents.SAVE_RESUMED);
+    }
+    else if (message.startsWith('[INFO] Player connected')) {
+      const arr = message
+        .replace('[INFO] Player connected: ', '')
+        .split(', xuid: ');
+      
+      const player: BedrockPlayer = {
+        handle: arr[0],
+        xuid: arr[1]
+      };
+
+      if (++this._playerCount > 0) {
+        this.startBackups();
+      }
+      
+      this.events.emit(BedrockEvents.PLAYER_CONNECTED, player);
+    }
+    else if (message.startsWith('[INFO] Player disconnected')) {
+      const arr = message
+        .replace('[INFO] Player disconnected: ', '')
+        .split(', xuid: ');
+      
+      const player: BedrockPlayer = {
+        handle: arr[0],
+        xuid: arr[1]
+      };
+
+      if (--this._playerCount === 0) {
+        this.stopBackups();
+      }
+      
+      this.events.emit(BedrockEvents.PLAYER_DISCONNECTED, player);
     }
     else if (message.includes('"command":')) {
       this.events.emit(BedrockEvents.PERMISSIONS_LISTED, message);
@@ -101,10 +157,32 @@ export class Bedrock {
     });
   }
 
-  private wait = (ms: number) => {
+  private wait(ms: number) {
     return new Promise<void>(r => {
       setTimeout(() => r(), ms);
     });
+  }
+
+  private startBackups() {
+    if (this.backupTimeoutId !== null) {
+      return;
+    }
+
+    this.backupTimeoutId = setTimeout(async () => {
+      await this.backup();
+
+      this.backupTimeoutId = null;
+      this.startBackups();
+    }, 1000 * 60);
+  }
+
+  private stopBackups() {
+    if (this.backupTimeoutId === null) {
+      return;
+    }
+
+    clearTimeout(this.backupTimeoutId);
+    this.backupTimeoutId = null;
   }
 
   async start(): Promise<void> {
@@ -129,6 +207,7 @@ export class Bedrock {
     await new Promise<void>(r => {
       this.server!.once('close', () => {
         this.server = undefined;
+        this._playerCount = 0;
         
         r();
       });
@@ -185,6 +264,12 @@ export class Bedrock {
   }
 
   async backup() {
+    if (this.backingUp) {
+      throw new Error('Already backing up');
+    }
+
+    this.backingUp = true;
+
     this.sendAndWait('save hold', BedrockEvents.SAVE_HELD);
 
     let files = await this.saveQuery();
@@ -222,5 +307,7 @@ export class Bedrock {
     }
 
     this.send('save resume');
+
+    this.backingUp = false;
   }
 }
