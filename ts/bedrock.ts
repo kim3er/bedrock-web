@@ -1,0 +1,226 @@
+import { ChildProcessWithoutNullStreams, spawn } from 'child_process';
+import { EventEmitter } from 'events';
+import path from 'path';
+import { exists, copyFile, mkdir } from './fsx';
+import { DateTime } from 'luxon';
+import mkdirp from 'mkdirp';
+
+export interface BedrockPermissions {
+  ops: string[]
+  permissions: { xuid: string, permission: 'operator' | 'member' | 'visitor' }
+}
+
+export interface BedrockFile {
+  name: string
+  size: number
+}
+
+class BedrockEvents {
+  static SERVER_STARTED = 'server-started';
+  static SERVER_STOPPED = 'server-stopped';
+  static PERMISSIONS_LISTED = 'permissions-listed';
+  static SAVE_HELD = 'save-held';
+  static SAVE_RESUMED = 'save-resume';
+}
+
+class BedrockMessages {
+  static SERVER_STARTED = '[INFO] Server started.';
+  static SERVER_STOPPED = 'Quit correctly';
+  static SAVE_HELD = 'Saving...';
+  static SAVE_RESUMED = 'Changes to the level are resumed.';
+}
+
+export class Bedrock {
+  
+  private readonly serverPath: string;
+  private readonly events = new EventEmitter();
+  private server?: ChildProcessWithoutNullStreams;
+
+  constructor(serverPath: string) {
+    this.serverPath = serverPath;
+  }
+
+  private dataListener(data: Buffer) {
+    const message = data.toString().trim();
+    if (message === BedrockMessages.SERVER_STARTED) {
+      this.events.emit(BedrockEvents.SERVER_STARTED);
+    }
+    else if (message === BedrockMessages.SERVER_STOPPED) {
+      this.events.emit(BedrockEvents.SERVER_STOPPED);
+    }
+    else if (message === BedrockMessages.SAVE_HELD) {
+      this.events.emit(BedrockEvents.SAVE_HELD);
+    }
+    else if (message === BedrockMessages.SAVE_RESUMED) {
+      this.events.emit(BedrockEvents.SAVE_RESUMED);
+    }
+    else if (message.includes('"command":')) {
+      this.events.emit(BedrockEvents.PERMISSIONS_LISTED, message);
+    }
+  }
+
+  private send(cmd: string) {
+    this.server!.stdin.write(`${cmd}\n`);
+  }
+
+  private sendAndWait(cmd: string, event: string, timeout = 5000) {
+    return new Promise<any[]>((resolve, reject) => {
+      const listener = ((...args: any[]) => {
+        clearTimeout(timeoutId);
+
+        resolve(args);
+      }).bind(this);
+
+      const timeoutId = setTimeout(() => {
+        this.events.off(event, listener);
+
+        reject(new Error(`Request timed out: ${cmd}`));
+      }, timeout);
+
+      this.events.once(event, listener);
+
+      this.server!.stdin.write(`${cmd}\n`);
+    });
+  }
+
+  private once(event: string, timeout = 5000) {
+    return new Promise<any[]>((resolve, reject) => {
+      const listener = ((...args: any[]) => {
+        clearTimeout(timeoutId);
+
+        resolve(args);
+      }).bind(this);
+
+      const timeoutId = setTimeout(() => {
+        this.events.off(event, listener);
+
+        reject(new Error('Request timed out'));
+      }, timeout);
+
+      this.events.once(event, listener);
+    });
+  }
+
+  private wait = (ms: number) => {
+    return new Promise<void>(r => {
+      setTimeout(() => r(), ms);
+    });
+  }
+
+  async start(): Promise<void> {
+    if (this.isRunning()) {
+      throw new Error('Server already running');
+    }
+
+    this.server = spawn(path.join(this.serverPath, 'bedrock_server.exe'));
+
+    this.server.stdout.on('data', this.dataListener.bind(this));
+
+    await this.once(BedrockEvents.SERVER_STARTED);
+  }
+
+  async stop(): Promise<void> {
+    if (!this.isRunning()) {
+      return;
+    }
+          
+    await this.sendAndWait('stop', BedrockEvents.SERVER_STOPPED);
+
+    await new Promise<void>(r => {
+      this.server!.once('close', () => {
+        this.server = undefined;
+        
+        r();
+      });
+    });
+  }
+
+  isRunning() {
+    return this.server !== undefined;
+  }
+
+  async listPermissions(): Promise<BedrockPermissions> {
+    const args = await this.sendAndWait('permission list',
+      BedrockEvents.PERMISSIONS_LISTED);
+    
+    const message: string = args[0];
+    
+    const arr = message
+      .replace(/(\*|)###(\*|)/g, '')
+      .replace(/\s/g, '')
+      .replace('}{', '}*###*{')
+      .split('*###*');
+    
+    return {
+      ops: JSON.parse(arr[0]).result,
+      permissions: JSON.parse(arr[1]).result
+    };
+  }
+
+  private saveQuery() {
+    return new Promise<BedrockFile[] | null>(r => {
+      this.server!.stdout.once('data', (data: Buffer) => {
+        const message = data.toString().trim();
+        if (message.length === 0 || !message.startsWith('Data saved.')) {
+          r(null);
+          return;
+        }
+
+        const arr = message
+          .replace('Data saved. Files are now ready to be copied.', '')
+          .trim()
+          .split(', ');
+
+        const files: BedrockFile[] = [];
+        for (const f of arr) {
+          const fArr = f.split(':');
+          files.push({ name: fArr[0], size: Number(fArr[1]) });
+        }
+
+        r(files);
+      });
+      
+      this.send('save query');
+    });
+  }
+
+  async backup() {
+    this.sendAndWait('save hold', BedrockEvents.SAVE_HELD);
+
+    let files = await this.saveQuery();
+    while (files === null) {
+      await this.wait(100);
+      files = await this.saveQuery();
+    }
+
+    let backupPath = path.join(this.serverPath, 'backups');
+    if (!await exists(backupPath)) {
+      await mkdir(backupPath);
+    }
+
+    backupPath = path.join(backupPath, DateTime.utc().toFormat('yyyy-MM-dd-HH-mm'));
+    if (await exists(backupPath)) {
+      let idx = 1;
+      while (await exists(`${backupPath}-${idx}`)) {
+        idx++;
+      }
+
+      backupPath = `${backupPath}-${idx}`;
+    }
+
+    await mkdir(backupPath);
+
+    for (const file of files) {
+      const srcPath = path.join(this.serverPath, 'worlds', file.name),
+        destPath = path.join(backupPath, file.name);
+      
+      if (file.name.includes(path.posix.sep)) {
+        await mkdirp(destPath.substring(0, destPath.lastIndexOf(path.sep)));
+      }
+      
+      await copyFile(srcPath, destPath);
+    }
+
+    this.send('save resume');
+  }
+}
