@@ -173,7 +173,7 @@ export class Bedrock {
 
       this.backupTimeoutId = null;
       this.startBackups();
-    }, 1000 * 60);
+    }, 5 * 1000 * 60);
   }
 
   private stopBackups() {
