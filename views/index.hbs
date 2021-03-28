@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <title>{{ title }}</title>
+  <link rel='stylesheet' href='/stylesheets/style.css' />
+</head>
+
+<body>
+  <h1>{{ title }}</h1>
+  <p>Welcome to {{ title }}</p>
+
+  {{#if message}}
+  <p>{{ message }}</p>
+  {{/if}}
+
+  <ul>
+    {{#each backups}}
+    <li>
+      <form action="/restore/{{ this }}" method="POST">
+        <button type="submit">{{ this }}</button>
+      </form>
+    </li>
+    {{/each}}
+  </ul>
+
+  <script type="text/javascript">
+    document.addEventListener('DOMContentLoaded', () => {
+      document.querySelectorAll('form').forEach(f => {
+        f.addEventListener('submit', evt => {
+          if (!confirm('Are you sure?')) {
+            evt.preventDefault();
+          }
+        });
+      });
+    });
+  </script>
+</body>
+
+</html>

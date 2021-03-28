@@ -317,17 +317,12 @@ export class Bedrock {
   async listBackups() {
     const backupBasePath = path.join(this.serverPath, 'backups');
     if (!await fsx.exists(backupBasePath)) {
-      console.log('No backups');
-      return;
+      return [];
     }
 
-    const directories = await fsp.readdir(backupBasePath, {
+    return await fsp.readdir(backupBasePath, {
       withFileTypes: false
     });
-
-    for (const dir of directories) {
-      console.log(dir);
-    }
   }
 
   async restore(backupName: string) {
@@ -335,7 +330,6 @@ export class Bedrock {
       backupPath = path.join(backupBasePath, backupName);
     
     if (!await fsx.exists(backupPath)) {
-      console.log('Backup doesn\'t exist');
       return;
     }
 

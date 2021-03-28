@@ -32,8 +32,6 @@ export async function copyDir(srcPath: string, destPath: string) {
 
     const destEntryPath = path.join(destPath, entry);
     
-    console.log(entryPath, destEntryPath);
-    
     if (stat.isFile()) {
       await fsp.copyFile(entryPath, destEntryPath);
     }
