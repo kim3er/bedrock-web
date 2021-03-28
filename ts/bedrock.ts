@@ -1,7 +1,8 @@
 import { ChildProcessWithoutNullStreams, spawn } from 'child_process';
 import { EventEmitter } from 'events';
 import path from 'path';
-import { exists, copyFile, mkdir } from './fsx';
+import fs from 'fs';
+import * as fsx from './fsx';
 import { DateTime } from 'luxon';
 import mkdirp from 'mkdirp';
 
@@ -19,6 +20,8 @@ export interface BedrockPlayer {
   handle: string
   xuid: string
 }
+
+const fsp = fs.promises;
 
 class BedrockEvents {
   static SERVER_STARTED = 'server-started';
@@ -119,7 +122,7 @@ export class Bedrock {
     this.server!.stdin.write(`${cmd}\n`);
   }
 
-  private sendAndWait(cmd: string, event: string, timeout = 5000) {
+  private sendAndWait(cmd: string, event: string, timeout = 30000) {
     return new Promise<any[]>((resolve, reject) => {
       const listener = ((...args: any[]) => {
         clearTimeout(timeoutId);
@@ -139,7 +142,7 @@ export class Bedrock {
     });
   }
 
-  private once(event: string, timeout = 5000) {
+  private once(event: string, timeout = 30000) {
     return new Promise<any[]>((resolve, reject) => {
       const listener = ((...args: any[]) => {
         clearTimeout(timeoutId);
@@ -278,22 +281,22 @@ export class Bedrock {
       files = await this.saveQuery();
     }
 
-    let backupPath = path.join(this.serverPath, 'backups');
-    if (!await exists(backupPath)) {
-      await mkdir(backupPath);
+    const backupBasePath = path.join(this.serverPath, 'backups');
+    if (!await fsx.exists(backupBasePath)) {
+      await fsp.mkdir(backupBasePath);
     }
 
-    backupPath = path.join(backupPath, DateTime.utc().toFormat('yyyy-MM-dd-HH-mm'));
-    if (await exists(backupPath)) {
+    let backupPath = path.join(backupBasePath, DateTime.utc().toFormat('yyyy-MM-dd-HH-mm'));
+    if (await fsx.exists(backupPath)) {
       let idx = 1;
-      while (await exists(`${backupPath}-${idx}`)) {
+      while (await fsx.exists(`${backupPath}-${idx}`)) {
         idx++;
       }
 
       backupPath = `${backupPath}-${idx}`;
     }
 
-    await mkdir(backupPath);
+    await fsp.mkdir(backupPath);
 
     for (const file of files) {
       const srcPath = path.join(this.serverPath, 'worlds', file.name),
@@ -303,11 +306,50 @@ export class Bedrock {
         await mkdirp(destPath.substring(0, destPath.lastIndexOf(path.sep)));
       }
       
-      await copyFile(srcPath, destPath);
+      await fsp.copyFile(srcPath, destPath);
     }
 
     this.send('save resume');
 
     this.backingUp = false;
   }
+
+  async listBackups() {
+    const backupBasePath = path.join(this.serverPath, 'backups');
+    if (!await fsx.exists(backupBasePath)) {
+      console.log('No backups');
+      return;
+    }
+
+    const directories = await fsp.readdir(backupBasePath, {
+      withFileTypes: false
+    });
+
+    for (const dir of directories) {
+      console.log(dir);
+    }
+  }
+
+  async restore(backupName: string) {
+    const backupBasePath = path.join(this.serverPath, 'backups'),
+      backupPath = path.join(backupBasePath, backupName);
+    
+    if (!await fsx.exists(backupPath)) {
+      console.log('Backup doesn\'t exist');
+      return;
+    }
+
+    const wasRunning = this.isRunning();
+
+    if (wasRunning) {
+      await this.stop();
+    }
+
+    fsx.copyDir(backupPath, path.join(this.serverPath, 'worlds'));
+
+    if (wasRunning) {
+      await this.start();
+    }
+  }
+
 }
