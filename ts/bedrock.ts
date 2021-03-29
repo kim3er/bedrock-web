@@ -5,6 +5,7 @@ import fs from 'fs';
 import * as fsx from './fsx';
 import { DateTime } from 'luxon';
 import mkdirp from 'mkdirp';
+import del from 'del';
 
 export interface BedrockPermissions {
   ops: string[]
@@ -48,6 +49,7 @@ export class Bedrock {
   private backupTimeoutId: NodeJS.Timeout | null = null;
   private backingUp = false;
   private currentMessage = '';
+  private settings: Record<string, string> = {};
 
   private _playerCount = 0;
   get playerCount() {
@@ -188,7 +190,26 @@ export class Bedrock {
     this.backupTimeoutId = null;
   }
 
+  async load() {
+    const contents = await fsp.readFile(path.join(this.serverPath, 'server.properties'));
+    const lines = contents.toString().split('\n');
+    for (const line of lines) {
+      const cleaned = line.trim();
+
+      if (cleaned.startsWith('#') || !cleaned.includes('=')) {
+        continue;
+      }
+
+      const keyValue = cleaned.split('=');
+      this.settings[keyValue[0].trim()] = keyValue[1].trim();
+    }
+  }
+
   async start(): Promise<void> {
+    if (!Object.keys(this.settings).length) {
+      await this.load();
+    }
+
     if (this.isRunning()) {
       throw new Error('Server already running');
     }
@@ -198,6 +219,8 @@ export class Bedrock {
     this.server.stdout.on('data', this.dataListener.bind(this));
 
     await this.once(BedrockEvents.SERVER_STARTED);
+
+    console.log(`${this.settings['server-name']} started!`);
   }
 
   async stop(): Promise<void> {
@@ -266,7 +289,7 @@ export class Bedrock {
     });
   }
 
-  async backup() {
+  async backup(name?: string) {
     if (this.backingUp) {
       throw new Error('Already backing up');
     }
@@ -287,6 +310,10 @@ export class Bedrock {
     }
 
     let backupPath = path.join(backupBasePath, DateTime.utc().toFormat('yyyy-MM-dd-HH-mm'));
+    if (name !== undefined) {
+      backupPath += `-${name}`;
+    }
+
     if (await fsx.exists(backupPath)) {
       let idx = 1;
       while (await fsx.exists(`${backupPath}-${idx}`)) {
@@ -333,17 +360,17 @@ export class Bedrock {
       return;
     }
 
-    const wasRunning = this.isRunning();
+    this.stopBackups();
 
-    if (wasRunning) {
-      await this.stop();
-    }
+    await this.backup('before-restore');
+
+    await this.stop();
+
+    await del(path.join(this.serverPath, 'worlds', this.settings['level-name']), { force: true });
 
     fsx.copyDir(backupPath, path.join(this.serverPath, 'worlds'));
 
-    if (wasRunning) {
-      await this.start();
-    }
+    await this.start();
   }
 
 }
