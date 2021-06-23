@@ -1,7 +1,7 @@
 import { Bedrock } from './bedrock';
 import express from 'express';
 import sassMiddleware from 'node-sass-middleware';
-import path from 'path';
+import * as path from 'path';
 
 const app = express();
 
@@ -56,6 +56,6 @@ app.use(express.static(path.join(__dirname, '../public')));
   });
 
   app.listen(3000, async () => {
-    console.log(`Example app listening at http://localhost:3000`);
+    console.log(`The Borg are listening at http://localhost:3000`);
   });
 })();
