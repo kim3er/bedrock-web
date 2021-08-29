@@ -6,6 +6,7 @@ import * as fsx from './fsx';
 import { DateTime } from 'luxon';
 import mkdirp from 'mkdirp';
 import del from 'del';
+import { EventLogger } from 'node-windows';
 
 export interface BedrockPermissions {
   ops: string[]
@@ -45,6 +46,8 @@ export class Bedrock {
   
   private readonly serverPath: string;
   private readonly events = new EventEmitter();
+  private readonly log = new EventLogger();
+
   private server?: ChildProcessWithoutNullStreams;
   private backupTimeoutId: NodeJS.Timeout | null = null;
   private backingUp = false;
@@ -98,6 +101,8 @@ export class Bedrock {
       }
       
       this.events.emit(BedrockEvents.PLAYER_CONNECTED, player);
+
+      this.log.info(`${player.handle} connected`);
     }
     else if (message.startsWith('[INFO] Player disconnected')) {
       const arr = message
@@ -114,6 +119,8 @@ export class Bedrock {
       }
       
       this.events.emit(BedrockEvents.PLAYER_DISCONNECTED, player);
+
+      this.log.info(`${player.handle} disconnected`);
     }
     else if (message.includes('"command":')) {
       this.events.emit(BedrockEvents.PERMISSIONS_LISTED, message);
@@ -322,6 +329,8 @@ export class Bedrock {
 
       backupPath = `${backupPath}-${idx}`;
     }
+
+    this.log.info(`Backing up to ${backupPath}`);
 
     await fsp.mkdir(backupPath);
 

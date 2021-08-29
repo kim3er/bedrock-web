@@ -34,12 +34,20 @@ app.use(express.static(path.join(__dirname, '../public')));
     }
   });
 
+  process.on('exit', () => {
+    bedrock && bedrock.stop();
+  });
+
   await bedrock.start();
 
   app.get('/', async (req, res) => {
     res.render('index', {
       title: 'Express',
-      message: req.query.backup ? `${req.query.backup} restored` : null,
+      message: req.query.backup
+        ? req.query.backup === '1'
+          ? 'Backed up'
+          : `${req.query.backup} restored`
+        : null,
       backups: await bedrock.listBackups()
     });
   });
@@ -53,6 +61,11 @@ app.use(express.static(path.join(__dirname, '../public')));
     
     await bedrock.restore(backupName);
     res.redirect(`/?backup=${req.params.backup}`);
+  });
+
+  app.post('/backup', async (req, res) => {
+    await bedrock.backup('manual');
+    res.redirect(`/?backup=1`);
   });
 
   app.listen(3000, async () => {

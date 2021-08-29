@@ -10,6 +10,7 @@ var fsx = tslib_1.__importStar(require("./fsx"));
 var luxon_1 = require("luxon");
 var mkdirp_1 = tslib_1.__importDefault(require("mkdirp"));
 var del_1 = tslib_1.__importDefault(require("del"));
+var node_windows_1 = require("node-windows");
 var fsp = fs_1.default.promises;
 var BedrockEvents = (function () {
     function BedrockEvents() {
@@ -35,6 +36,7 @@ var BedrockMessages = (function () {
 var Bedrock = (function () {
     function Bedrock(serverPath) {
         this.events = new events_1.EventEmitter();
+        this.log = new node_windows_1.EventLogger();
         this.backupTimeoutId = null;
         this.backingUp = false;
         this.currentMessage = '';
@@ -81,6 +83,7 @@ var Bedrock = (function () {
                 this.startBackups();
             }
             this.events.emit(BedrockEvents.PLAYER_CONNECTED, player);
+            this.log.info(player.handle + " connected");
         }
         else if (message.startsWith('[INFO] Player disconnected')) {
             var arr = message
@@ -94,6 +97,7 @@ var Bedrock = (function () {
                 this.stopBackups();
             }
             this.events.emit(BedrockEvents.PLAYER_DISCONNECTED, player);
+            this.log.info(player.handle + " disconnected");
         }
         else if (message.includes('"command":')) {
             this.events.emit(BedrockEvents.PERMISSIONS_LISTED, message);
@@ -345,7 +349,9 @@ var Bedrock = (function () {
                     case 12:
                         backupPath = backupPath + "-" + idx;
                         _a.label = 13;
-                    case 13: return [4, fsp.mkdir(backupPath)];
+                    case 13:
+                        this.log.info("Backing up to " + backupPath);
+                        return [4, fsp.mkdir(backupPath)];
                     case 14:
                         _a.sent();
                         _i = 0, files_1 = files;

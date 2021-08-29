@@ -50,6 +50,9 @@ app.use(express_1.default.static(path.join(__dirname, '../public')));
                         }
                     });
                 }); });
+                process.on('exit', function () {
+                    bedrock && bedrock.stop();
+                });
                 return [4, bedrock.start()];
             case 1:
                 _a.sent();
@@ -63,7 +66,11 @@ app.use(express_1.default.static(path.join(__dirname, '../public')));
                                 _c = ['index'];
                                 _d = {
                                     title: 'Express',
-                                    message: req.query.backup ? req.query.backup + " restored" : null
+                                    message: req.query.backup
+                                        ? req.query.backup === '1'
+                                            ? 'Backed up'
+                                            : req.query.backup + " restored"
+                                        : null
                                 };
                                 return [4, bedrock.listBackups()];
                             case 1:
@@ -87,6 +94,17 @@ app.use(express_1.default.static(path.join(__dirname, '../public')));
                             case 1:
                                 _a.sent();
                                 res.redirect("/?backup=" + req.params.backup);
+                                return [2];
+                        }
+                    });
+                }); });
+                app.post('/backup', function (req, res) { return tslib_1.__awaiter(void 0, void 0, void 0, function () {
+                    return tslib_1.__generator(this, function (_a) {
+                        switch (_a.label) {
+                            case 0: return [4, bedrock.backup('manual')];
+                            case 1:
+                                _a.sent();
+                                res.redirect("/?backup=1");
                                 return [2];
                         }
                     });
